@@ -2,7 +2,9 @@
 # El repositorio de la app es privado: para descargarlo se usa un token de solo lectura guardado
 # en la variable de entorno del usuario RUTASDE_TOKEN (se crea una vez con setx; nunca va en un archivo).
 # Si no hay internet, no hay token o algo falla, abre la versión que ya está en la computadora.
-# rodMap-lanzador v2: también se actualiza a sí mismo, el ícono y el nombre de los accesos directos.
+# rodMap-lanzador v3: también se actualiza a sí mismo, el ícono y el nombre de los accesos directos.
+# El ícono se guarda con un nombre nuevo cada vez que cambia (rodmap-xxxxxxxx.ico): Windows guarda en caché
+# los íconos por ruta, así que cambiar el archivo sin cambiar la ruta deja el logo viejo en el escritorio.
 $ErrorActionPreference = 'SilentlyContinue'
 $dir  = $PSScriptRoot
 $app  = Join-Path $dir 'ruta-sde.html'
@@ -86,19 +88,33 @@ try {
             $actual = Join-Path $dir 'abrir.ps1'
             if ((Get-FileHash $nuevo).Hash -ne (Get-FileHash $actual).Hash) { Move-Item $nuevo $actual -Force } else { Remove-Item $nuevo -Force }
         } else { Remove-Item $nuevo -Force }
-        $ico = Join-Path $dir 'ruta-sde.ico'; $icoN = "$ico.nuevo"
+        $icoN = Join-Path $dir 'icono.nuevo'
         Bajar 'lanzador/ruta-sde.ico' $icoN 20
         if ((Test-Path $icoN) -and ((Get-Item $icoN).Length -gt 1000)) {
-            if ((Get-FileHash $icoN).Hash -ne (Get-FileHash $ico).Hash) { Move-Item $icoN $ico -Force; $cambioIcono = $true } else { Remove-Item $icoN -Force }
+            $nombre = 'rodmap-' + (Get-FileHash $icoN).Hash.Substring(0, 8).ToLower() + '.ico'
+            if (-not (Test-Path (Join-Path $dir $nombre))) { Move-Item $icoN (Join-Path $dir $nombre) -Force } else { Remove-Item $icoN -Force }
         } else { Remove-Item $icoN -Force }
     }
+    # el ícono vigente: el rodmap-*.ico más reciente (o el original, si todavía no hay ninguno)
+    $icoActual = Get-ChildItem $dir -Filter 'rodmap-*.ico' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $icoRuta = if ($icoActual) { $icoActual.FullName } else { Join-Path $dir 'ruta-sde.ico' }
     $ws = New-Object -ComObject WScript.Shell
     foreach ($l in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
         $viejo = Join-Path $l 'Ruta SDE.lnk'; $bueno = Join-Path $l 'rodMap.lnk'
         if ((Test-Path $viejo) -and -not (Test-Path $bueno)) { Move-Item $viejo $bueno -Force }
-        if ((Test-Path $bueno) -and $cambioIcono) {
-            $lnk = $ws.CreateShortcut($bueno); $lnk.IconLocation = (Join-Path $dir 'ruta-sde.ico') + ',0'
-            $lnk.Description = 'rodMap: tu ruta de cero a trabajar en tecnología'; $lnk.Save()
+        if (Test-Path $bueno) {
+            $lnk = $ws.CreateShortcut($bueno)
+            if ($lnk.IconLocation -ne "$icoRuta,0") {
+                $lnk.IconLocation = "$icoRuta,0"
+                $lnk.Description = 'rodMap: tu ruta de cero a trabajar en tecnología'
+                $lnk.Save()
+                $cambioIcono = $true
+            }
         }
+    }
+    if ($cambioIcono) {
+        # pide a Windows que vuelva a leer los íconos, y borra los íconos viejos que ya no usa ningún acceso directo
+        Start-Process "$env:WINDIR\System32\ie4uinit.exe" -ArgumentList '-show' -WindowStyle Hidden
+        Get-ChildItem $dir -Filter 'rodmap-*.ico' | Where-Object { $_.FullName -ne $icoRuta } | Remove-Item -Force
     }
 } catch { }
